@@ -247,7 +247,12 @@ ConfigParser.prototype.set = function(section, key, value, index) {
         if(this._options.strict) {
             this._sections[section][key] = value;
         } else {
-            this._sections[section][index][key] = value
+            if(this._sections[section] instanceof Array){
+                this._sections[section][index][key] = value
+            } else {
+                this._sections[section][key] = value
+            }
+
         }
     }
 };
