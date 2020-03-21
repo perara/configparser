@@ -184,14 +184,10 @@ ConfigParser.prototype.get = function(section, key, options, index) {
             }
         } else {
             if(options.raw){
-                if(
-                    this._sections.hasOwnProperty(section) &&
-                    this._sections[section].length >= index &&
-                    this._sections[section][index].hasOwnProperty(key)
-                ){
+                if(this._sections[section] instanceof  Array && this._sections.length >= index && this._sections[section][index].hasOwnProperty(key)){
                     return this._sections[section][index][key];
                 } else {
-                    throw errors.DuplicateSectionError(section)
+                    return this._sections[section][key];
                 }
             } else {
                 throw Error("Not implemented for strict=false")
