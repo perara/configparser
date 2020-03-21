@@ -71,9 +71,13 @@ ConfigParser.prototype.addSection = function(section, data) {
         if(this._options.strict){
             throw new errors.DuplicateSectionError(section)
         }else{
-            this._sections[section] = [
-                this._sections[section], data
-            ]
+            if(this._sections[section] instanceof Array) {
+                this._sections[section].push(data);
+            }else {
+                this._sections[section] = [
+                    this._sections[section], data
+                ]
+            }
         }
     } else {
         this._sections[section] = data;
