@@ -80,4 +80,12 @@ describe('ConfigParser object', function(){
         expect(config.removeSection('new-section')).to.equal(true);
         expect(config.hasSection('new-section')).to.equal(false);
     });
+
+    it('should handle duplicate sections', function(){
+        config.setStrict(false);
+        config.addSection("section1", {"test": "test"});
+        config.set("section1", "key", "test", 1);
+
+        
+    })
 });

@@ -34,15 +34,18 @@ const LINE_BOUNDARY = new RegExp(/\r\n|[\n\r\u0085\u2028\u2029]/g);
 
 const readFileAsync = util.promisify(fs.readFile);
 const writeFileAsync = util.promisify(fs.writeFile);
-const statAsync = util.promisify(fs.stat);
 const mkdirAsync = util.promisify(mkdirp);
 
 /**
  * @constructor
  */
-function ConfigParser() {
+function ConfigParser(options) {
+    this._options = options || {
+        strict: true,
+    };
     this._sections = {};
 }
+
 
 /**
  * Returns an array of the sections.
@@ -52,16 +55,30 @@ ConfigParser.prototype.sections = function() {
     return Object.keys(this._sections);
 };
 
+ConfigParser.prototype.setStrict = function(strict){
+    this._options.strict = strict;
+};
+
 /**
  * Adds a section named section to the instance. If the section already
  * exists, a DuplicateSectionError is thrown.
  * @param {string} section - Section Name
  */
-ConfigParser.prototype.addSection = function(section) {
-    if(this._sections.hasOwnProperty(section)){
-        throw new errors.DuplicateSectionError(section)
+ConfigParser.prototype.addSection = function(section, data) {
+    data = data || {};
+
+    if(this._sections.hasOwnProperty(section)) {
+        if(this._options.strict){
+            throw new errors.DuplicateSectionError(section)
+        }else{
+            this._sections[section] = [
+                this._sections[section], data
+            ]
+        }
+    } else {
+        this._sections[section] = data;
     }
-    this._sections[section] = {};
+
 };
 
 /**
@@ -77,25 +94,48 @@ ConfigParser.prototype.hasSection = function(section) {
 /**
  * Returns an array of all keys in the specified section.
  * @param {string} section - Section Name
+ * @param {number} index - Index of the section for strict=false
  * @returns {Array}
  */
-ConfigParser.prototype.keys = function(section) {
-    try {
-        return Object.keys(this._sections[section]);
-    } catch(err){
+ConfigParser.prototype.keys = function(section, index) {
+
+    if(this._sections.hasOwnProperty[section]) {
+
+        if(this._options.strict) {
+            return Object.keys(this._sections[section]);
+        } else if(this._sections.length >= index) {
+            return Object.keys(this._sections[section][index])
+        } else {
+            throw new errors.NoSectionError(section);
+        }
+
+    } else {
         throw new errors.NoSectionError(section);
     }
+
 };
 
 /**
  * Indicates whether the specified key is in the section.
  * @param {string} section - Section Name
  * @param {string} key - Key Name
+ * @param {number} index - Index of the section for strict=false
  * @returns {boolean}
  */
-ConfigParser.prototype.hasKey = function (section, key) {
-    return this._sections.hasOwnProperty(section) &&
-        this._sections[section].hasOwnProperty(key);
+ConfigParser.prototype.hasKey = function (section, key, index) {
+    if(this._options.strict){
+        return this._sections.hasOwnProperty(section) &&
+            this._sections[section].hasOwnProperty(key);
+    } else {
+        try {
+            return this._sections.hasOwnProperty(section) &&
+                this._sections[section][index].hasOwnProperty(key);
+        } catch {
+            throw new errors.NoSectionError(section);
+        }
+
+    }
+
 };
 
 /**
@@ -106,6 +146,7 @@ ConfigParser.prototype.read = function(file) {
     const lines = fs.readFileSync(file)
         .toString('utf8')
         .split(LINE_BOUNDARY);
+
     parseLines.call(this, lines);
 };
 
@@ -118,7 +159,7 @@ ConfigParser.prototype.readAsync = async function(file) {
         .toString('utf8')
         .split(LINE_BOUNDARY);
     parseLines.call(this, lines);
-}
+};
 
 /**
  * Gets the value for the key in the named section.
@@ -127,13 +168,36 @@ ConfigParser.prototype.readAsync = async function(file) {
  * @param {boolean} [raw=false] - Whether or not to replace placeholders
  * @returns {string|undefined}
  */
-ConfigParser.prototype.get = function(section, key, raw) {
+ConfigParser.prototype.get = function(section, key, options, index) {
+    options = options || {
+        raw: true
+    };
+
     if(this._sections.hasOwnProperty(section)){
-        if(raw){
-            return this._sections[section][key];
+
+
+        if(this._options.strict){
+            if(options.raw){
+                return this._sections[section][key];
+            } else {
+                return interpolation.interpolate(this, section, key);
+            }
         } else {
-            return interpolation.interpolate(this, section, key);
+            if(options.raw){
+                if(
+                    this._sections.hasOwnProperty(section) &&
+                    this._sections[section].length >= index &&
+                    this._sections[section][index].hasOwnProperty(key)
+                ){
+                    return this._sections[section][index][key];
+                } else {
+                    throw errors.DuplicateSectionError(section)
+                }
+            } else {
+                throw Error("Not implemented for strict=false")
+            }
         }
+
     }
     return undefined;
 };
@@ -180,10 +244,15 @@ ConfigParser.prototype.items = function(section) {
  * @param {string} section - Section Name
  * @param {string} key - Key Name
  * @param {*} value - New Key Value
+ * @param {number} index - Index in non-strict-mode
  */
-ConfigParser.prototype.set = function(section, key, value) {
+ConfigParser.prototype.set = function(section, key, value, index) {
     if(this._sections.hasOwnProperty(section)){
-        this._sections[section][key] = value;
+        if(this._options.strict) {
+            this._sections[section][key] = value;
+        } else {
+            this._sections[section][index][key] = value
+        }
     }
 };
 
@@ -191,13 +260,21 @@ ConfigParser.prototype.set = function(section, key, value) {
  * Removes the property specified by key in the named section.
  * @param {string} section - Section Name
  * @param {string} key - Key Name
+ * @param {number} index - Index in non-strict-mode
  * @returns {boolean}
  */
-ConfigParser.prototype.removeKey = function(section, key) {
+ConfigParser.prototype.removeKey = function(section, key, index) {
     // delete operator returns true if the property doesn't not exist
-    if(this._sections.hasOwnProperty(section) &&
-        this._sections[section].hasOwnProperty(key)){
-        return delete this._sections[section][key];
+    if(this._sections.hasOwnProperty(section)){
+        if(this._options.strict && this._sections[section].hasOwnProperty(key)) {
+            return delete this._sections[section][key];
+        } else if(
+            !this._options.strict &&
+            this._sections[section].length >= index &&
+            this._sections[section][index].hasOwnProperty(key)
+        ) {
+            return delete this._sections[section][index][key];
+        }
     }
     return false;
 };
@@ -205,12 +282,18 @@ ConfigParser.prototype.removeKey = function(section, key) {
 /**
  * Removes the named section (and associated key, value pairs).
  * @param {string} section - Section Name
+ * @param {number} index - Index in non-strict-mode
  * @returns {boolean}
  */
-ConfigParser.prototype.removeSection = function(section) {
+ConfigParser.prototype.removeSection = function(section, index) {
     if(this._sections.hasOwnProperty(section)){
-        return delete this._sections[section];
+        if(this._options.strict) {
+            return delete this._sections[section];
+        } else if(!this._options.strict && this._sections[section].length >= index) {
+            return delete this._sections[section][index];
+        }
     }
+
     return false;
 };
 
@@ -253,7 +336,25 @@ function parseLines(lines) {
         if(res){
             const header = res[1];
             curSec = {};
-            this._sections[header] = curSec;
+
+            if(this._options.strict) {
+                if(!!this._sections[header]) {
+                    throw new errors.DuplicateSectionError(header)
+                } else {
+                    this._sections[header] = curSec
+                }
+            } else {
+
+                if(this._sections[header] instanceof Array) {
+                    this._sections[header].push(curSec)
+                } else if(this._sections[header] instanceof Object) {
+                    this._sections[header] = [this._sections[header], curSec]
+                } else {
+                    this._sections[header] = curSec
+                }
+            }
+
+
         } else if(!curSec) {
             throw new errors.MissingSectionHeaderError(file, lineNumber, line);
         } else {
@@ -270,18 +371,30 @@ function parseLines(lines) {
 
 function getSectionsAsString() {
     let out = '';
-    let section;
-    for(section in this._sections){
-        if(!this._sections.hasOwnProperty(section)) continue;
-        out += ('[' + section + ']\n');
-        const keys = this._sections[section];
-        let key;
-        for(key in keys){
-            if(!keys.hasOwnProperty(key)) continue;
-            let value = keys[key];
-            out += (key + '=' + value + '\n');
+    let secKey;
+    for(secKey in this._sections){
+        if(!this._sections.hasOwnProperty(secKey)) continue;
+
+        let currentSection = this._sections[secKey] instanceof Array ? this._sections[secKey] : [this._sections[secKey]];
+
+        for(let secIdx in currentSection) {
+            if(!currentSection.hasOwnProperty(secIdx)) continue;
+            let section = currentSection[secIdx];
+
+            out += ('[' + secKey + ']\n');
+            const keys = section;
+
+            let key;
+            for(key in keys){
+                if(!keys.hasOwnProperty(key)) continue;
+                let value = keys[key];
+                out += (key + '=' + value + '\n');
+            }
+            out += '\n';
+
         }
-        out += '\n';
+
+
     }
     return out;
 }
